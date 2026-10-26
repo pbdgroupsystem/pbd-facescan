@@ -69,7 +69,16 @@ async function loadTeam() {
   const cache = LS.get('fsRef', {}), have = {};
   Object.keys(cache).forEach(no => have[no] = cache[no].key);
   hint('กำลังโหลดรายชื่อและใบหน้าต้นแบบ…');
-  team = await api({ fs: 'team', have });
+  team = await api({ fs: 'team', have, branch: LS.get('fsBranch', '') });
+  if (team.chooseBranch) {   // ผู้ดูแลระบบ: เลือกสาขาที่จะทดสอบ
+    const b = await new Promise(ok => {
+      $('list').innerHTML = '<div class="small">เลือกสาขา</div>' + team.chooseBranch.map(x => '<button style="margin:4px" data-b="' + esc(x) + '">' + esc(x) + '</button>').join('');
+      $('list').querySelectorAll('button').forEach(btn => btn.onclick = () => ok(btn.dataset.b));
+      hint('เลือกสาขาด้านล่าง');
+    });
+    LS.set('fsBranch', b);
+    team = await api({ fs: 'team', have, branch: b });
+  }
   $('who').textContent = team.leader + ' · สาขา ' + team.branch + ' · ' + team.date;
   let n = 0;
   for (const m of team.members) {
