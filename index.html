@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>สแกนเข้างานนอกพื้นที่ · PBD</title>
+<style>
+:root{--brand:#8B1A1A;--ok:#1E8E3E;--warn:#D99800;--bad:#D1342B;--muted:#6B7078;--bg:#F6F6F7;--card:#fff;--line:#E3E4E6}
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,"Sarabun","Noto Sans Thai",sans-serif;background:var(--bg);color:#1F2328}
+header{background:var(--brand);color:#fff;padding:12px 16px}header b{font-size:17px}header small{display:block;opacity:.85;font-size:12px;margin-top:2px}
+main{padding:12px 16px 90px;max-width:560px;margin:0 auto}
+.card{background:var(--card);border-radius:12px;padding:12px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+#camWrap{position:relative;border-radius:12px;overflow:hidden;background:#000;aspect-ratio:3/4}
+video,canvas.ov{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#hint{position:absolute;left:0;right:0;bottom:0;padding:10px;background:linear-gradient(transparent,rgba(0,0,0,.75));color:#fff;font-size:15px;text-align:center}
+#match{display:none;text-align:center}#match .nm{font-size:22px;font-weight:700;margin:4px 0}#match .sub{color:var(--muted);font-size:13px}
+.btns{display:flex;gap:8px;margin-top:10px}.btns button{flex:1}
+button{border:0;border-radius:10px;padding:12px;font-size:16px;font-family:inherit;background:var(--line);color:#1F2328}
+button.pri{background:var(--brand);color:#fff;font-weight:700}button:disabled{opacity:.5}
+.row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--line);font-size:14px}.row:first-child{border-top:0}
+.tag{font-size:11px;padding:2px 6px;border-radius:6px;background:#FFF3D6;color:#8A5A00;margin-left:6px}
+.st{font-weight:700}.st.ok{color:var(--ok)}.st.no{color:var(--muted);font-weight:400}
+#msg{font-size:13px;color:var(--muted);margin:6px 0 0}#err{color:var(--bad);font-size:14px;white-space:pre-wrap}
+#q{font-size:13px;color:var(--warn)}
+.small{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header><b>สแกนเข้างานนอกพื้นที่</b><small id="who">กำลังเข้าสู่ระบบ…</small></header>
+<main>
+  <div class="card" id="errCard" style="display:none"><div id="err"></div></div>
+  <div class="card">
+    <div id="camWrap"><video id="v" playsinline muted></video><canvas class="ov" id="ov"></canvas><div id="hint">กำลังเตรียมกล้อง…</div></div>
+    <div class="btns"><button id="flip">🔄 สลับกล้อง</button></div>
+    <div id="match" class="card" style="margin:10px 0 0;box-shadow:none;border:1px solid var(--line)">
+      <div class="sub">ใบหน้าตรงกับ</div><div class="nm" id="mName"></div><div class="sub" id="mSub"></div>
+      <div class="btns"><button id="no">ไม่ใช่</button><button id="yes" class="pri">บันทึกเข้างาน</button></div>
+    </div>
+    <p id="msg"></p><p id="q"></p>
+  </div>
+  <div class="card"><b id="listTitle">รายชื่อ</b><div class="small" id="listSub"></div><div id="list"></div></div>
+  <p class="small">ข้อมูลใบหน้าใช้เพื่อลงเวลาเข้างานเท่านั้น · ระบบบันทึกเวลา ตำแหน่ง GPS และรูปที่สแกน</p>
+</main>
+<script src="config.js"></script>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<script>
+const C = window.FS_CONFIG, MODEL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
+const $ = id => document.getElementById(id);
+let idToken = '', team = null, matcher = null, facing = 'environment', stream = null, busy = false, pending = null, pos = null, skipUntil = 0;
+const LS = { get(k, d) { try { return JSON.parse(localStorage.getItem(k)) || d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
+const err = t => { $('errCard').style.display = t ? 'block' : 'none'; $('err').textContent = t || ''; };
+const msg = t => $('msg').textContent = t || '';
+const hint = t => $('hint').textContent = t;
+
+async function api(body) {
+  const r = await fetch(C.GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ idToken }, body)) });
+  const j = await r.json(); if (!j.ok) throw new Error(j.error || 'ผิดพลาด'); return j;
+}
+
+// ---------- ใบหน้าต้นแบบ (เก็บค่าใบหน้าไว้ในเครื่อง ไม่ต้องคำนวณใหม่ทุกครั้ง) ----------
+async function descOf(src) {
+  const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = src; });
+  let d = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.4 })).withFaceLandmarks().withFaceDescriptor();
+  if (!d) d = await faceapi.detectSingleFace(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 })).withFaceLandmarks().withFaceDescriptor();
+  return d ? Array.from(d.descriptor) : null;
+}
+async function loadTeam() {
+  const cache = LS.get('fsRef', {}), have = {};
+  Object.keys(cache).forEach(no => have[no] = cache[no].key);
+  hint('กำลังโหลดรายชื่อและใบหน้าต้นแบบ…');
+  team = await api({ fs: 'team', have });
+  $('who').textContent = team.leader + ' · สาขา ' + team.branch + ' · ' + team.date;
+  let n = 0;
+  for (const m of team.members) {
+    if (m.refs) {
+      hint('กำลังเตรียมใบหน้า ' + (++n) + ' · ' + (m.nick || m.name));
+      const ds = []; for (const s of m.refs) { try { const d = await descOf(s); if (d) ds.push(d); } catch (e) {} }
+      cache[m.no] = { key: m.refKey, ds };
+    }
+  }
+  const keep = {}; team.members.forEach(m => { if (cache[m.no]) keep[m.no] = cache[m.no]; }); LS.set('fsRef', keep);
+  const labeled = team.members.filter(m => keep[m.no] && keep[m.no].ds.length).map(m => new faceapi.LabeledFaceDescriptors(m.no, keep[m.no].ds.map(d => new Float32Array(d))));
+  matcher = labeled.length ? new faceapi.FaceMatcher(labeled, team.maxDist) : null;
+  renderList();
+  if (!matcher) throw new Error('ยังไม่มีใบหน้าต้นแบบของสาขานี้ — แจ้งผู้ดูแลระบบให้รัน fsRefRefresh');
+}
+function renderList() {
+  const q = LS.get('fsQueue', []);
+  $('listTitle').textContent = 'รายชื่อสาขา ' + team.branch;
+  const trip = team.members.filter(m => m.trip).length;
+  $('listSub').textContent = (trip ? 'มีใบออกแวนวันนี้ ' + trip + ' คน (แสดงก่อน) · ' : 'วันนี้ยังไม่มีใบออกแวนในระบบ · ') + 'สแกนแล้ว ' + team.members.filter(m => m.scanned).length + ' คน';
+  const noRef = m => !(LS.get('fsRef', {})[m.no] || { ds: [] }).ds.length;
+  $('list').innerHTML = team.members.map(m => '<div class="row"><span>' + esc(m.nick ? m.nick + ' · ' + m.name.split(/\s/)[0] : m.name) + (m.trip ? '<span class="tag">ออกแวน</span>' : '') + (noRef(m) ? '<span class="tag">ไม่มีรูปต้นแบบ</span>' : '') + '</span>' +
+    (m.scanned ? '<span class="st ok">✓ ' + m.scanned.slice(0, 5) + '</span>' : q.some(x => x.no === m.no) ? '<span class="st" style="color:var(--warn)">รอส่ง</span>' : '<span class="st no">ยังไม่สแกน</span>') + '</div>').join('');
+  $('q').textContent = q.length ? 'มี ' + q.length + ' รายการรอส่ง (ไม่มีสัญญาณ) — ระบบจะส่งให้เองเมื่อมีสัญญาณ' : '';
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ---------- กล้อง + ตรวจจับ ----------
+async function startCam() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: { ideal: 640 }, height: { ideal: 853 } }, audio: false });
+  $('v').srcObject = stream; await $('v').play();
+  $('v').style.transform = facing === 'user' ? 'scaleX(-1)' : '';
+}
+async function loop() {
+  const v = $('v');
+  if (!busy && matcher && v.readyState >= 2 && Date.now() > skipUntil && !pending) {
+    busy = true;
+    try {
+      const d = await faceapi.detectSingleFace(v, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
+      if (!d) hint('หันหน้าเข้ากล้อง ให้เห็นหน้าชัด ๆ คนเดียว');
+      else if (d.detection.box.width < v.videoWidth * 0.22) hint('เข้าใกล้กล้องอีกนิด');
+      else {
+        const best = matcher.findBestMatch(d.descriptor);
+        if (best.label === 'unknown') hint('ไม่พบใบหน้านี้ในรายชื่อสาขา ' + team.branch);
+        else showMatch(best, v);
+      }
+    } catch (e) { hint('ตรวจจับไม่สำเร็จ ลองใหม่'); }
+    busy = false;
+  }
+  setTimeout(loop, 350);
+}
+function snap(v) {
+  const c = document.createElement('canvas'), w = 360, h = Math.round(v.videoHeight * w / v.videoWidth);
+  c.width = w; c.height = h; c.getContext('2d').drawImage(v, 0, 0, w, h); return c.toDataURL('image/jpeg', 0.7);
+}
+function showMatch(best, v) {
+  const m = team.members.find(x => x.no === best.label);
+  pending = { no: m.no, dist: best.distance, photo: snap(v), ts: Date.now() };
+  $('mName').textContent = (m.nick ? m.nick + ' · ' : '') + m.name;
+  $('mSub').textContent = 'รหัส ' + m.no + ' · ความเหมือน ' + Math.round((1 - best.distance) * 100) + '%' + (m.scanned ? ' · สแกนแล้ว ' + m.scanned.slice(0, 5) : '') + (m.trip ? '' : ' · ไม่มีใบออกแวนวันนี้');
+  $('match').style.display = 'block'; hint('พบใบหน้า — กดยืนยัน');
+}
+$('no').onclick = () => { pending = null; $('match').style.display = 'none'; skipUntil = Date.now() + 1500; };
+$('yes').onclick = async () => {
+  if (!pending) return;
+  const p = Object.assign(pending, pos ? { lat: pos.latitude, lng: pos.longitude, acc: pos.accuracy } : {});
+  pending = null; $('match').style.display = 'none'; skipUntil = Date.now() + 2500;
+  const m = team.members.find(x => x.no === p.no);
+  try { const r = await api(Object.assign({ fs: 'scan' }, p)); m.scanned = r.time + ':00'; msg('✓ บันทึก ' + (m.nick || m.name) + ' เวลา ' + r.time + (r.dup ? ' (บันทึกไว้แล้ว)' : '')); }
+  catch (e) {
+    if (/ยืนยันตัวตน|สิทธิ์|ไม่ถูกต้อง|ไม่พบรหัส|เฉพาะพนักงาน/.test(e.message)) { err(e.message); }
+    else { const q = LS.get('fsQueue', []); q.push(p); LS.set('fsQueue', q); msg('ไม่มีสัญญาณ — เก็บไว้ส่งทีหลัง (เวลาที่สแกนจริงไม่เปลี่ยน)'); }
+  }
+  renderList();
+};
+$('flip').onclick = async () => { facing = facing === 'environment' ? 'user' : 'environment'; try { await startCam(); } catch (e) { err('เปิดกล้องไม่ได้: ' + e.message); } };
+
+async function flush() {
+  const q = LS.get('fsQueue', []); if (!q.length || !idToken) return;
+  const left = [];
+  for (const p of q) {
+    try { const r = await api(Object.assign({ fs: 'scan' }, p)); const m = team && team.members.find(x => x.no === p.no); if (m) m.scanned = r.time + ':00'; }
+    catch (e) { if (!/ไม่ถูกต้อง|ไม่พบรหัส|เฉพาะพนักงาน/.test(e.message)) left.push(p); }
+  }
+  LS.set('fsQueue', left); if (team) renderList();
+}
+
+// ---------- เริ่ม ----------
+(async () => {
+  try {
+    if (!C.LIFF_ID || !C.GAS_URL) throw new Error('ยังไม่ได้ตั้งค่า LIFF_ID / GAS_URL ในไฟล์ config.js');
+    await liff.init({ liffId: C.LIFF_ID });
+    if (!liff.isLoggedIn()) { liff.login(); return; }
+    idToken = liff.getIDToken();
+    if (navigator.geolocation) navigator.geolocation.watchPosition(p => pos = p.coords, () => msg('ไม่ได้รับตำแหน่ง GPS — เปิด GPS และอนุญาตตำแหน่งให้ LINE'), { enableHighAccuracy: true, maximumAge: 60000 });
+    hint('กำลังโหลดโมเดลจดจำใบหน้า…');
+    await Promise.all([faceapi.nets.tinyFaceDetector.loadFromUri(MODEL), faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL), faceapi.nets.faceLandmark68Net.loadFromUri(MODEL), faceapi.nets.faceRecognitionNet.loadFromUri(MODEL)]);
+    await loadTeam();
+    await startCam();
+    hint('ให้พนักงานหันหน้าเข้ากล้องทีละคน');
+    flush(); setInterval(flush, 20000);
+    loop();
+  } catch (e) { err(e.message || String(e)); hint('เริ่มไม่สำเร็จ'); }
+})();
+</script>
+</body>
+</html>
