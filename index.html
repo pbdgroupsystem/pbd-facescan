@@ -98,7 +98,7 @@ function renderList() {
   const q = LS.get('fsQueue', []);
   $('listTitle').textContent = 'รายชื่อสาขา ' + team.branch;
   const trip = team.members.filter(m => m.trip).length;
-  $('listSub').textContent = (trip ? 'มีใบออกแวนวันนี้ ' + trip + ' คน (แสดงก่อน) · ' : 'วันนี้ยังไม่มีใบออกแวนในระบบ · ') + 'สแกนแล้ว ' + team.members.filter(m => m.scanned).length + ' คน';
+  $('listSub').textContent = (trip ? 'มีใบออกแวนวันนี้ ' + trip + ' คน (สแกนได้เฉพาะคนที่มีใบออกแวน) · ' : 'วันนี้ยังไม่มีใบออกแวนในระบบ — สแกนไม่ได้ · ') + 'สแกนแล้ว ' + team.members.filter(m => m.scanned).length + ' คน';
   const noRef = m => !(LS.get('fsRef', {})[m.no] || { ds: [] }).ds.length;
   $('list').innerHTML = team.members.map(m => '<div class="row"><span>' + esc(m.nick ? m.nick + ' · ' + m.name.split(/\s/)[0] : m.name) + (m.trip ? '<span class="tag">ออกแวน</span>' : '') + (noRef(m) ? '<span class="tag">ไม่มีรูปต้นแบบ</span>' : '') + '</span>' +
     (m.scanned ? '<span class="st ok">✓ ' + m.scanned.slice(0, 5) + '</span>' : q.some(x => x.no === m.no) ? '<span class="st" style="color:var(--warn)">รอส่ง</span>' : '<span class="st no">ยังไม่สแกน</span>') + '</div>').join('');
@@ -137,6 +137,7 @@ function snap(v) {
 }
 function showMatch(best, v) {
   const m = team.members.find(x => x.no === best.label);
+  if (!m.trip) { hint('✗ ' + (m.nick || m.name) + ' ไม่มีใบออกแวนวันนี้ — สแกนนอกพื้นที่ไม่ได้'); skipUntil = Date.now() + 2500; return; }
   pending = { no: m.no, dist: best.distance, photo: snap(v), ts: Date.now() };
   $('mName').textContent = (m.nick ? m.nick + ' · ' : '') + m.name;
   $('mSub').textContent = 'รหัส ' + m.no + ' · ความเหมือน ' + Math.round((1 - best.distance) * 100) + '%' + (m.scanned ? ' · สแกนแล้ว ' + m.scanned.slice(0, 5) : '') + (m.trip ? '' : ' · ไม่มีใบออกแวนวันนี้');
