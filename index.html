@@ -61,8 +61,15 @@ const SAY = {
   noTrip: 'ไม่มีใบออกแวน กรุณาติดต่อแอดมินประจำสาขา ขอบคุณค่ะ',
   queued: 'ไม่มีสัญญาณ บันทึกไว้ในเครื่องแล้ว จะส่งให้อัตโนมัติค่ะ',
   fail: 'บันทึกไม่สำเร็จ กรุณาลองใหม่ค่ะ',
+  blink: 'กรุณากะพริบตาค่ะ',
+  noBlink: 'ไม่พบการกะพริบตา กรุณาลองใหม่ค่ะ',
 };
 let actx = null, thVoice = null, lastSay = { t: '', at: 0 };
+// ไฟล์เสียงที่อัดไว้ (โฟลเดอร์ sounds/ ใน GitHub) — ใช้ก่อนเสียงอ่านของเครื่อง เพราะเบราว์เซอร์ใน LINE อ่านภาษาไทยไม่ได้
+const SND_FILE = { ok: 'ok', dup: 'dup', noTrip: 'no-trip', queued: 'queued', fail: 'fail', blink: 'blink', noBlink: 'no-blink' };
+const SND = {};
+Object.keys(SND_FILE).forEach(k => { try { const a = new Audio('sounds/' + SND_FILE[k] + '.mp3?v=1'); a.preload = 'auto'; a.ok = false;
+  a.addEventListener('canplaythrough', () => a.ok = true); a.addEventListener('error', () => a.ok = false); SND[k] = a; } catch (e) {} });
 function pickVoice() { try { const vs = speechSynthesis.getVoices(); thVoice = vs.find(v => /^th/i.test(v.lang)) || null; } catch (e) {} }
 if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
 const TAP_MSG = '🔊 แตะหน้าจอ 1 ครั้งเพื่อเปิดเสียงแจ้งเตือน';
@@ -70,6 +77,8 @@ function unlockSound() {
   if ($('msg').textContent === TAP_MSG) msg('');
   try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch (e) {}
   try { if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } } catch (e) {}
+  // ปลดล็อกไฟล์เสียง (WebView ของ LINE เล่นเสียงได้หลังแตะจอเท่านั้น): เล่นแบบปิดเสียงแล้วหยุดทันที
+  Object.values(SND).forEach(a => { try { a.muted = true; const p = a.play(); if (p && p.then) p.then(() => { a.pause(); a.currentTime = 0; a.muted = false; }).catch(() => { a.muted = false; }); else { a.pause(); a.muted = false; } } catch (e) { a.muted = false; } });
 }
 ['touchstart', 'click'].forEach(ev => document.addEventListener(ev, unlockSound, { once: true, passive: true }));
 function beep(good) {
@@ -86,8 +95,12 @@ function say(text, good) {
   const now = Date.now();
   if (text === lastSay.t && now - lastSay.at < 6000) return;
   lastSay = { t: text, at: now };
-  beep(good);
   try { if (navigator.vibrate) navigator.vibrate(good ? 80 : [200, 100, 200]); } catch (e) {}
+  const key = Object.keys(SAY).find(k => SAY[k] === text), a = key && SND[key];
+  if (a && a.ok) {   // มีไฟล์เสียง → เล่นไฟล์ (ไม่บี๊บ)
+    try { Object.values(SND).forEach(x => { if (x !== a && !x.paused) { x.pause(); x.currentTime = 0; } }); a.currentTime = 0; const p = a.play(); if (p && p.catch) p.catch(() => beep(good)); return; } catch (e) {}
+  }
+  beep(good);
   try {
     if (!('speechSynthesis' in window)) return;
     speechSynthesis.cancel();
@@ -156,8 +169,42 @@ async function startCam() {
   $('v').srcObject = stream; await $('v').play();
   $('v').style.transform = facing === 'user' ? 'scaleX(-1)' : '';
 }
+// ---------- ตรวจว่าเป็นคนจริง: ต้องกะพริบตา 1 ครั้ง (รูปถ่าย/หน้าจอมือถือกะพริบไม่ได้) ----------
+// วัดความเปิดของตา (EAR) จากจุดรอบดวงตา 6 จุดต่อข้าง — ตาปิด = ค่าลดลงชัดเจนจากตอนลืมตา แล้วกลับมาเปิด
+const LIVE = { TIMEOUT: 8000, CLOSE: 0.72, OPEN: 0.88, LOST_MS: 1500 };
+let live = null;
+const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+function earOf(lm) {
+  const e = p => (dist2(p[1], p[5]) + dist2(p[2], p[4])) / (2 * dist2(p[0], p[3]));
+  return (e(lm.getLeftEye()) + e(lm.getRightEye())) / 2;
+}
+function startLive(best, m) {
+  live = { label: best.label, name: m.nick || m.name, t0: Date.now(), seen: Date.now(), base: 0, closed: false, box: null };
+  hint('👁 ' + live.name + ' — กะพริบตา 1 ครั้ง'); say(SAY.blink, true);
+}
+async function liveStep(v) {
+  if (Date.now() - live.t0 > LIVE.TIMEOUT) { hint('ไม่พบการกะพริบตา — ลองใหม่ (ห้ามใช้รูปถ่าย)'); say(SAY.noBlink, false); live = null; skipUntil = Date.now() + 1500; return; }
+  const d = await faceapi.detectSingleFace(v, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 })).withFaceLandmarks();
+  if (!d) { if (Date.now() - live.seen > LIVE.LOST_MS) { hint('ใบหน้าหลุดจากกล้อง — เริ่มใหม่'); live = null; } return; }
+  live.seen = Date.now();
+  const b = d.detection.box, c = { x: b.x + b.width / 2, y: b.y + b.height / 2, w: b.width };
+  if (live.box && dist2(c, live.box) > live.box.w * 0.5) { live = null; hint('เปลี่ยนคน/ขยับมากเกินไป — เริ่มใหม่'); return; }   // กันสลับหน้าระหว่างกะพริบ
+  live.box = live.box || c;
+  const ear = earOf(d.landmarks);
+  live.base = Math.max(live.base * 0.995, ear);                 // ค่าตอนลืมตา (ค่อย ๆ ลดลงเผื่อหน้าเอียง)
+  if (!live.closed && live.base > 0.15 && (ear < live.base * LIVE.CLOSE || ear < 0.17)) live.closed = true;
+  else if (live.closed && ear > live.base * LIVE.OPEN) {
+    // กะพริบแล้ว → ยืนยันอีกครั้งว่าเป็นคนเดิม แล้วแสดงปุ่มยืนยัน
+    const f = await faceapi.detectSingleFace(v, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
+    const best = f && matcher.findBestMatch(f.descriptor);
+    const lbl = live.label; live = null;
+    if (!best || best.label !== lbl) { hint('ใบหน้าไม่ตรงกับก่อนกะพริบตา — ลองใหม่'); return; }
+    best.live = true; showMatch(best, v);
+  }
+}
 async function loop() {
   const v = $('v');
+  if (live && !busy && v.readyState >= 2) { busy = true; try { await liveStep(v); } catch (e) { live = null; } busy = false; setTimeout(loop, 40); return; }
   if (!busy && matcher && v.readyState >= 2 && Date.now() > skipUntil && !pending) {
     busy = true;
     try {
@@ -181,9 +228,10 @@ function snap(v) {
 function showMatch(best, v) {
   const m = team.members.find(x => x.no === best.label);
   if (!m.trip) { hint('✗ ' + (m.nick || m.name) + ' ไม่มีใบออกแวนวันนี้ — กรุณาติดต่อแอดมินประจำสาขา'); say(SAY.noTrip, false); skipUntil = Date.now() + 2500; return; }
-  pending = { no: m.no, dist: best.distance, photo: snap(v), ts: Date.now() };
+  if (!best.live) { startLive(best, m); return; }
+  pending = { no: m.no, dist: best.distance, photo: snap(v), ts: Date.now(), live: 1 };
   $('mName').textContent = (m.nick ? m.nick + ' · ' : '') + m.name;
-  $('mSub').textContent = 'รหัส ' + m.no + ' · ความเหมือน ' + Math.round((1 - best.distance) * 100) + '%' + (m.scanned ? ' · สแกนแล้ว ' + m.scanned.slice(0, 5) : '') + (m.trip ? '' : ' · ไม่มีใบออกแวนวันนี้');
+  $('mSub').textContent = 'รหัส ' + m.no + ' · ความเหมือน ' + Math.round((1 - best.distance) * 100) + '%' + (m.scanned ? ' · สแกนแล้ว ' + m.scanned.slice(0, 5) : '') + (m.trip ? '' : ' · ไม่มีใบออกแวนวันนี้') + ' · ✓ กะพริบตาแล้ว';
   $('match').style.display = 'block'; hint('พบใบหน้า — กดยืนยัน');
 }
 $('no').onclick = () => { pending = null; $('match').style.display = 'none'; skipUntil = Date.now() + 1500; };
