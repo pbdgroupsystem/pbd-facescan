@@ -53,6 +53,49 @@ const err = t => { $('errCard').style.display = t ? 'block' : 'none'; $('err').t
 const msg = t => $('msg').textContent = t || '';
 const hint = t => $('hint').textContent = t;
 
+// ---------- เสียงแจ้งเตือน (พูดภาษาไทย + เสียงบี๊บ + สั่น) ----------
+// เบราว์เซอร์ยอมให้เล่นเสียงหลังผู้ใช้แตะจอครั้งแรกเท่านั้น → ปลดล็อกเมื่อแตะครั้งแรก
+const SAY = {
+  ok: 'บันทึกสำเร็จค่ะ',
+  dup: 'ลงทะเบียนแล้ว ขอบคุณค่ะ',
+  noTrip: 'ไม่มีใบออกแวน กรุณาติดต่อแอดมินประจำสาขา ขอบคุณค่ะ',
+  queued: 'ไม่มีสัญญาณ บันทึกไว้ในเครื่องแล้ว จะส่งให้อัตโนมัติค่ะ',
+  fail: 'บันทึกไม่สำเร็จ กรุณาลองใหม่ค่ะ',
+};
+let actx = null, thVoice = null, lastSay = { t: '', at: 0 };
+function pickVoice() { try { const vs = speechSynthesis.getVoices(); thVoice = vs.find(v => /^th/i.test(v.lang)) || null; } catch (e) {} }
+if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+const TAP_MSG = '🔊 แตะหน้าจอ 1 ครั้งเพื่อเปิดเสียงแจ้งเตือน';
+function unlockSound() {
+  if ($('msg').textContent === TAP_MSG) msg('');
+  try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch (e) {}
+  try { if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } } catch (e) {}
+}
+['touchstart', 'click'].forEach(ev => document.addEventListener(ev, unlockSound, { once: true, passive: true }));
+function beep(good) {
+  try {
+    if (!actx) return;
+    const tones = good ? [880, 1320] : [330, 220];
+    tones.forEach((f, i) => { const o = actx.createOscillator(), g = actx.createGain(), t0 = actx.currentTime + i * 0.16;
+      o.frequency.value = f; o.type = 'sine'; g.gain.setValueAtTime(0.25, t0); g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.14);
+      o.connect(g); g.connect(actx.destination); o.start(t0); o.stop(t0 + 0.15); });
+  } catch (e) {}
+}
+/** good = เสียงสำเร็จ / ไม่สำเร็จ · ข้อความเดียวกันซ้ำภายใน 6 วินาทีจะไม่พูดซ้ำ */
+function say(text, good) {
+  const now = Date.now();
+  if (text === lastSay.t && now - lastSay.at < 6000) return;
+  lastSay = { t: text, at: now };
+  beep(good);
+  try { if (navigator.vibrate) navigator.vibrate(good ? 80 : [200, 100, 200]); } catch (e) {}
+  try {
+    if (!('speechSynthesis' in window)) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); u.lang = 'th-TH'; if (thVoice) u.voice = thVoice; u.rate = 1;
+    setTimeout(() => speechSynthesis.speak(u), 320);
+  } catch (e) {}
+}
+
 async function api(body) {
   const r = await fetch(C.GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ idToken }, body)) });
   const j = await r.json(); if (!j.ok) throw new Error(j.error || 'ผิดพลาด'); return j;
@@ -137,7 +180,7 @@ function snap(v) {
 }
 function showMatch(best, v) {
   const m = team.members.find(x => x.no === best.label);
-  if (!m.trip) { hint('✗ ' + (m.nick || m.name) + ' ไม่มีใบออกแวนวันนี้ — สแกนนอกพื้นที่ไม่ได้'); skipUntil = Date.now() + 2500; return; }
+  if (!m.trip) { hint('✗ ' + (m.nick || m.name) + ' ไม่มีใบออกแวนวันนี้ — กรุณาติดต่อแอดมินประจำสาขา'); say(SAY.noTrip, false); skipUntil = Date.now() + 2500; return; }
   pending = { no: m.no, dist: best.distance, photo: snap(v), ts: Date.now() };
   $('mName').textContent = (m.nick ? m.nick + ' · ' : '') + m.name;
   $('mSub').textContent = 'รหัส ' + m.no + ' · ความเหมือน ' + Math.round((1 - best.distance) * 100) + '%' + (m.scanned ? ' · สแกนแล้ว ' + m.scanned.slice(0, 5) : '') + (m.trip ? '' : ' · ไม่มีใบออกแวนวันนี้');
@@ -149,10 +192,11 @@ $('yes').onclick = async () => {
   const p = Object.assign(pending, pos ? { lat: pos.latitude, lng: pos.longitude, acc: pos.accuracy } : {});
   pending = null; $('match').style.display = 'none'; skipUntil = Date.now() + 2500;
   const m = team.members.find(x => x.no === p.no);
-  try { const r = await api(Object.assign({ fs: 'scan' }, p)); m.scanned = r.time + ':00'; msg('✓ บันทึก ' + (m.nick || m.name) + ' เวลา ' + r.time + (r.dup ? ' (บันทึกไว้แล้ว)' : '')); }
+  try { const r = await api(Object.assign({ fs: 'scan' }, p)); m.scanned = r.time + ':00'; msg('✓ บันทึก ' + (m.nick || m.name) + ' เวลา ' + r.time + (r.dup ? ' (บันทึกไว้แล้ว)' : '')); say(r.dup ? SAY.dup : SAY.ok, true); }
   catch (e) {
-    if (/ยืนยันตัวตน|สิทธิ์|ไม่ถูกต้อง|ไม่พบรหัส|เฉพาะพนักงาน/.test(e.message)) { err(e.message); }
-    else { const q = LS.get('fsQueue', []); q.push(p); LS.set('fsQueue', q); msg('ไม่มีสัญญาณ — เก็บไว้ส่งทีหลัง (เวลาที่สแกนจริงไม่เปลี่ยน)'); }
+    if (/ใบออกแวน/.test(e.message)) { err(e.message); say(SAY.noTrip, false); }
+    else if (/ยืนยันตัวตน|สิทธิ์|ไม่ถูกต้อง|ไม่พบรหัส|เฉพาะพนักงาน/.test(e.message)) { err(e.message); say(SAY.fail, false); }
+    else { const q = LS.get('fsQueue', []); q.push(p); LS.set('fsQueue', q); msg('ไม่มีสัญญาณ — เก็บไว้ส่งทีหลัง (เวลาที่สแกนจริงไม่เปลี่ยน)'); say(SAY.queued, true); }
   }
   renderList();
 };
@@ -181,6 +225,7 @@ async function flush() {
     await loadTeam();
     await startCam();
     hint('ให้พนักงานหันหน้าเข้ากล้องทีละคน');
+    if (!actx) msg(TAP_MSG);
     flush(); setInterval(flush, 20000);
     loop();
   } catch (e) { err(e.message || String(e)); hint('เริ่มไม่สำเร็จ'); }
