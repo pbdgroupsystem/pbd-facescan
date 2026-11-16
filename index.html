@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>สแกนเข้างานนอกพื้นที่ · PBD</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#8B1A1A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="PBD สแกนหน้า">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
 <style>
 :root{--brand:#8B1A1A;--ok:#1E8E3E;--warn:#D99800;--bad:#D1342B;--muted:#6B7078;--bg:#F6F6F7;--card:#fff;--line:#E3E4E6}
 *{box-sizing:border-box}body{margin:0;font-family:-apple-system,"Sarabun","Noto Sans Thai",sans-serif;background:var(--bg);color:#1F2328}
@@ -22,11 +30,24 @@ button.pri{background:var(--brand);color:#fff;font-weight:700}button:disabled{op
 .st{font-weight:700}.st.ok{color:var(--ok)}.st.no{color:var(--muted);font-weight:400}
 #msg{font-size:13px;color:var(--muted);margin:6px 0 0}#err{color:var(--bad);font-size:14px;white-space:pre-wrap}
 #q{font-size:13px;color:var(--warn)}
+header{display:flex;align-items:center;gap:10px;padding-top:max(12px,env(safe-area-inset-top))}header .t{flex:1;min-width:0}
+#appBtn{background:rgba(255,255,255,.18);color:#fff;font-size:13px;padding:7px 11px;border-radius:999px;white-space:nowrap;display:none}
+#pair{position:fixed;inset:0;z-index:50;background:linear-gradient(180deg,#3a0d0d,#8B1A1A);color:#fff;overflow-y:auto;display:none;padding:max(28px,env(safe-area-inset-top)) 22px 28px;text-align:center}
+#pair .box{background:#fff;color:#1F2328;border-radius:18px;padding:18px;margin:18px auto 0;max-width:360px}
+#pair .code{font-size:38px;font-weight:800;letter-spacing:.22em;color:#8B1A1A;margin:4px 0}
+#pair a.line{display:block;background:#06C755;color:#fff;text-decoration:none;font-weight:700;border-radius:12px;padding:13px;margin-top:12px}
+#pair ol{text-align:left;font-size:13px;color:#555;padding-left:20px;margin:14px 0 0}#pair li{margin:4px 0}
+#pair .lnk{background:none;color:#fff;text-decoration:underline;font-size:13px;margin-top:16px;opacity:.85}
+#sheet{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.55);display:none;align-items:flex-end;justify-content:center}
+#sheet>div{background:#fff;border-radius:18px 18px 0 0;padding:18px 18px max(18px,env(safe-area-inset-bottom));width:100%;max-width:560px;font-size:14px}
+#sheet h3{margin:0 0 8px;font-size:17px}#sheet ol{padding-left:20px;margin:8px 0;color:#444}#sheet li{margin:5px 0}
 .small{font-size:12px;color:var(--muted)}
 </style>
 </head>
 <body>
-<header><b>สแกนเข้างานนอกพื้นที่</b><small id="who">กำลังเข้าสู่ระบบ…</small></header>
+<header><div class="t"><b>สแกนเข้างานนอกพื้นที่</b><small id="who">กำลังเข้าสู่ระบบ…</small></div><button id="appBtn" type="button">📲 ติดตั้งแอป</button></header>
+<div id="pair"></div>
+<div id="sheet"><div id="sheetBody"></div></div>
 <main>
   <div class="card" id="errCard" style="display:none"><div id="err"></div></div>
   <div class="card">
@@ -40,6 +61,7 @@ button.pri{background:var(--brand);color:#fff;font-weight:700}button:disabled{op
   </div>
   <div class="card"><b id="listTitle">รายชื่อ</b><div class="small" id="listSub"></div><div id="list"></div></div>
   <p class="small">ข้อมูลใบหน้าใช้เพื่อลงเวลาเข้างานเท่านั้น · ระบบบันทึกเวลา ตำแหน่ง GPS และรูปที่สแกน</p>
+  <p class="small" id="devLine" style="display:none"></p>
 </main>
 <script src="config.js"></script>
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -109,10 +131,91 @@ function say(text, good) {
   } catch (e) {}
 }
 
-async function api(body) {
-  const r = await fetch(C.GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ idToken }, body)) });
-  const j = await r.json(); if (!j.ok) throw new Error(j.error || 'ผิดพลาด'); return j;
+// ---------- แอปบนเครื่อง (PWA): ล็อกอินด้วยรหัสเครื่องที่จับคู่ผ่าน LINE ครั้งเดียว ----------
+const IN_LINE = /\bLine\//i.test(navigator.userAgent);
+const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const IS_APP = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+const DEV = { get token() { return LS.get('fsDT', ''); }, set token(v) { LS.set('fsDT', v || ''); } };
+const authBody = () => DEV.token && !IN_LINE ? { dt: DEV.token } : { idToken };
+const hasAuth = () => !!(idToken || (DEV.token && !IN_LINE));
+async function rawApi(body) {
+  const r = await fetch(C.GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
+  return r.json();
 }
+async function api(body) {
+  const j = await rawApi(Object.assign(authBody(), body));
+  if (!j.ok && j.devFail) { DEV.token = ''; showPair('เครื่องนี้ถูกยกเลิกการเชื่อม หรือรหัสหมดอายุ — เชื่อมใหม่อีกครั้ง'); throw new Error('ต้องเชื่อมเครื่องใหม่'); }
+  if (!j.ok) throw new Error(j.error || 'ผิดพลาด'); return j;
+}
+const LIFF_URL = q => 'https://liff.line.me/' + C.LIFF_ID + (q || '');
+const APP_URL = () => location.origin + location.pathname.replace(/index\.html$/, '');
+function devName() {
+  const ua = navigator.userAgent, m = ua.match(/Android [\d.]+; ([^;)]+?)(?: Build|\))/);
+  return (IS_IOS ? (/iPad/.test(ua) ? 'iPad' : 'iPhone') : m ? m[1].trim() : /Android/.test(ua) ? 'Android' : 'อุปกรณ์') + ' · แอปสแกนหน้า';
+}
+let pairTimer = null;
+async function showPair(note) {
+  const el = $('pair'); el.style.display = 'block';
+  if (pairTimer) { clearInterval(pairTimer); pairTimer = null; }
+  el.innerHTML = '<img src="icons/icon-192.png" alt="" style="width:76px;height:76px;border-radius:18px;box-shadow:0 6px 20px rgba(0,0,0,.3)"><h2 style="margin:12px 0 4px">PBD สแกนหน้านอกพื้นที่</h2>' +
+    '<div style="font-size:14px;opacity:.85">เชื่อมแอปบนเครื่องนี้กับ LINE ของคุณ (ทำครั้งเดียว)</div>' + (note ? '<div style="margin-top:12px;font-size:13px;background:rgba(255,255,255,.15);border-radius:10px;padding:8px">' + esc(note) + '</div>' : '') +
+    '<div class="box" id="pairBox">กำลังขอรหัส…</div><button class="lnk" id="webLogin">ล็อกอิน LINE ผ่านเว็บแทน</button>';
+  $('webLogin').onclick = () => { try { sessionStorage.setItem('fsWeb', '1'); } catch (e) {} location.reload(); };
+  let j = null; try { j = await rawApi({ wl: 'pstart', dev: devName() }); } catch (e) {}
+  const box = $('pairBox');
+  if (!j || !j.ok) { box.innerHTML = '<div style="color:var(--bad)">' + esc((j && j.error) || 'เชื่อมต่อระบบไม่ได้ ตรวจอินเทอร์เน็ต') + '</div><button class="pri" style="margin-top:12px;width:100%" onclick="showPair()">ลองใหม่</button>'; return; }
+  const until = Date.now() + (j.expiresIn || 600) * 1000;
+  box.innerHTML = '<div class="small">รหัสเชื่อมเครื่อง</div><div class="code">' + j.code.slice(0, 3) + ' ' + j.code.slice(3) + '</div><div class="small" id="pairLeft">หมดอายุใน 10 นาที</div>' +
+    '<a class="line" href="' + esc(LIFF_URL('?pair=' + j.code)) + '">ยืนยันใน LINE</a>' +
+    '<ol><li>กด <b>ยืนยันใน LINE</b> (บัญชี LINE ของหัวหน้าทีม/ผู้จัดการสาขา)</li><li>กดยืนยันรหัสนี้</li><li>กลับมาที่แอปนี้ ระบบเข้าให้อัตโนมัติ</li></ol>';
+  pairTimer = setInterval(async () => {
+    const left = Math.max(0, Math.round((until - Date.now()) / 1000)), lt = $('pairLeft');
+    if (lt) lt.textContent = left ? 'หมดอายุใน ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' นาที' : 'รหัสหมดอายุ';
+    if (!left) { clearInterval(pairTimer); pairTimer = null; showPair('รหัสเดิมหมดอายุ ใช้รหัสใหม่นี้แทน'); return; }
+    if (document.hidden) return;
+    try {
+      const r = await rawApi({ wl: 'ppoll', code: j.code, secret: j.secret });
+      if (r.ok && r.token) { clearInterval(pairTimer); pairTimer = null; DEV.token = r.token; LS.set('fsDTId', r.deviceId || ''); location.reload(); }
+      else if (r.expired) { clearInterval(pairTimer); pairTimer = null; showPair(r.error); }
+    } catch (e) {}
+  }, 3000);
+}
+/** ใน LINE: เปิดจากลิงก์ ?pair=รหัส → ยืนยันเชื่อมเครื่อง */
+function pairCodeFromUrl() {
+  const sp = new URLSearchParams(location.search); let c = sp.get('pair') || '';
+  if (!c) { const m = (sp.get('liff.state') || '').match(/pair=(\d{6})/); if (m) c = m[1]; }
+  return /^\d{6}$/.test(c) ? c : '';
+}
+async function claimPair(code) {
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  sheet('<h3>เชื่อมแอปบนเครื่องกับ LINE นี้?</h3><div>รหัส <b style="font-size:20px;letter-spacing:.15em;color:var(--brand)">' + code + '</b></div><div class="small" style="margin-top:6px">ยืนยันเฉพาะรหัสที่แสดงบนแอปในเครื่องของคุณเองเท่านั้น</div>' +
+    '<div class="btns"><button onclick="sheet()">ยกเลิก</button><button class="pri" id="pairYes">ยืนยันเชื่อมเครื่อง</button></div>');
+  $('pairYes').onclick = async () => {
+    $('pairYes').disabled = true;
+    try { await api({ fs: 'pclaim', code }); sheet('<h3>✓ เชื่อมเครื่องแล้ว</h3><div>กลับไปที่แอปบนเครื่อง ระบบจะเข้าให้อัตโนมัติ</div><div class="btns"><button class="pri" onclick="sheet()">ปิด</button></div>'); }
+    catch (e) { sheet('<h3>เชื่อมไม่สำเร็จ</h3><div style="color:var(--bad)">' + esc(e.message) + '</div><div class="btns"><button onclick="sheet()">ปิด</button></div>'); }
+  };
+}
+function sheet(html) { $('sheet').style.display = html ? 'flex' : 'none'; if (html) $('sheetBody').innerHTML = html; }
+$('sheet').onclick = e => { if (e.target.id === 'sheet') sheet(); };
+// ปุ่มติดตั้งแอป
+let installEvt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (!IS_APP) $('appBtn').style.display = 'block'; });
+if (!IS_APP) $('appBtn').style.display = 'block';
+$('appBtn').onclick = async () => {
+  if (installEvt) { installEvt.prompt(); try { await installEvt.userChoice; } catch (e) {} installEvt = null; return; }
+  if (IN_LINE) {
+    sheet('<h3>ติดตั้งเป็นแอปบนมือถือ</h3><div>ติดตั้งจากใน LINE ไม่ได้ ต้องเปิดใน ' + (IS_IOS ? '<b>Safari</b>' : '<b>Chrome</b>') + ' ก่อน</div>' +
+      '<div class="btns"><button onclick="sheet()">ปิด</button><button class="pri" id="openExt">เปิดในเบราว์เซอร์</button></div>');
+    $('openExt').onclick = () => { try { liff.openWindow({ url: APP_URL() + '?install=1', external: true }); } catch (e) { location.href = APP_URL(); } };
+    return;
+  }
+  sheet('<h3>ติดตั้งเป็นแอปบนมือถือ</h3>' + (IS_IOS
+    ? '<ol><li>กดปุ่ม <b>แชร์</b> (สี่เหลี่ยมมีลูกศรขึ้น) ด้านล่าง Safari</li><li>เลือก <b>เพิ่มไปยังหน้าจอโฮม</b></li><li>กด <b>เพิ่ม</b> แล้วเปิดแอป "PBD สแกนหน้า" จากหน้าจอโฮม</li></ol><div class="small">ต้องใช้ iOS 16.4 ขึ้นไป และเปิดใน Safari</div>'
+    : '<ol><li>กดเมนู <b>⋮</b> มุมขวาบนของ Chrome</li><li>เลือก <b>ติดตั้งแอป</b> หรือ <b>เพิ่มลงในหน้าจอหลัก</b></li><li>เปิดแอป "PBD สแกนหน้า" จากหน้าจอหลัก</li></ol>') +
+    '<div class="small">ครั้งแรกที่เปิดแอป ให้เชื่อมกับ LINE ของคุณ 1 ครั้ง</div><div class="btns"><button class="pri" onclick="sheet()">เข้าใจแล้ว</button></div>');
+};
+if ('serviceWorker' in navigator && !IN_LINE && location.protocol === 'https:') window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 
 // ---------- ใบหน้าต้นแบบ (เก็บค่าใบหน้าไว้ในเครื่อง ไม่ต้องคำนวณใหม่ทุกครั้ง) ----------
 async function descOf(src) {
@@ -252,7 +355,7 @@ $('yes').onclick = async () => {
 $('flip').onclick = async () => { facing = facing === 'environment' ? 'user' : 'environment'; try { await startCam(); } catch (e) { err('เปิดกล้องไม่ได้: ' + e.message); } };
 
 async function flush() {
-  const q = LS.get('fsQueue', []); if (!q.length || !idToken) return;
+  const q = LS.get('fsQueue', []); if (!q.length || !hasAuth()) return;
   const left = [];
   for (const p of q) {
     try { const r = await api(Object.assign({ fs: 'scan' }, p)); const m = team && team.members.find(x => x.no === p.no); if (m) m.scanned = r.time + ':00'; }
@@ -265,10 +368,21 @@ async function flush() {
 (async () => {
   try {
     if (!C.LIFF_ID || !C.GAS_URL) throw new Error('ยังไม่ได้ตั้งค่า LIFF_ID / GAS_URL ในไฟล์ config.js');
-    await liff.init({ liffId: C.LIFF_ID });
-    if (!liff.isLoggedIn()) { liff.login(); return; }
-    idToken = liff.getIDToken();
-    if (navigator.geolocation) navigator.geolocation.watchPosition(p => pos = p.coords, () => msg('ไม่ได้รับตำแหน่ง GPS — เปิด GPS และอนุญาตตำแหน่งให้ LINE'), { enableHighAccuracy: true, maximumAge: 60000 });
+    let web = ''; try { web = sessionStorage.getItem('fsWeb') || ''; } catch (e) {}
+    if (!IN_LINE && DEV.token) {   // แอปบนเครื่องที่เชื่อมแล้ว: ไม่ต้องใช้ LINE
+      $('who').textContent = 'แอปบนเครื่อง · กำลังโหลด…';
+      $('devLine').style.display = 'block';
+      $('devLine').innerHTML = 'แอปบนเครื่องนี้เชื่อมกับ LINE แล้ว · <a href="#" id="unpair" style="color:var(--muted)">ยกเลิกการเชื่อมเครื่องนี้</a>';
+      $('unpair').onclick = e => { e.preventDefault(); sheet('<h3>ยกเลิกการเชื่อมเครื่องนี้?</h3><div>ต้องเชื่อมกับ LINE ใหม่ก่อนใช้งานครั้งถัดไป</div><div class="btns"><button onclick="sheet()">ไม่</button><button class="pri" id="unYes">ยกเลิกการเชื่อม</button></div>');
+        $('unYes').onclick = async () => { try { await api({ fs: 'devoff' }); } catch (x) {} DEV.token = ''; location.reload(); }; };
+    } else if (!IN_LINE && (IS_APP || new URLSearchParams(location.search).has('src')) && !web) { await showPair(); return; }
+    else {
+      await liff.init({ liffId: C.LIFF_ID });
+      if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+      idToken = liff.getIDToken();
+      const pc = pairCodeFromUrl(); if (pc) claimPair(pc);
+    }
+    if (navigator.geolocation) navigator.geolocation.watchPosition(p => pos = p.coords, () => msg('ไม่ได้รับตำแหน่ง GPS — เปิด GPS และอนุญาตตำแหน่ง' + (IN_LINE ? 'ให้ LINE' : 'ให้แอปนี้')), { enableHighAccuracy: true, maximumAge: 60000 });
     hint('กำลังโหลดโมเดลจดจำใบหน้า…');
     await Promise.all([faceapi.nets.tinyFaceDetector.loadFromUri(MODEL), faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL), faceapi.nets.faceLandmark68Net.loadFromUri(MODEL), faceapi.nets.faceRecognitionNet.loadFromUri(MODEL)]);
     await loadTeam();
