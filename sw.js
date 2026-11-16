@@ -4,7 +4,7 @@
  * ตัวจดจำใบหน้า face-api.js + ไฟล์โมเดล (~10 MB จาก cdn.jsdelivr.net) และ LINE SDK : เก็บไว้ในเครื่องหลังโหลดครั้งแรก → เปิดเร็ว ใช้ได้ตอนสัญญาณไม่ดี
  * ไม่เก็บคำขอไประบบหลังบ้าน (GAS) → รายชื่อ/รูปใบหน้า/ผลสแกนไม่ถูกเก็บโดย service worker
  * แก้ไฟล์นี้ / เปลี่ยนไฟล์เสียงเมื่อไร ให้เปลี่ยน VERSION เพื่อล้างของเก่า */
-const VERSION = 'pbd-facescan-v3';
+const VERSION = 'pbd-facescan-v4';
 const MODEL_CACHE = 'pbd-facescan-models-v1';   // แยกไว้ ไม่ต้องโหลดโมเดลใหม่ทุกครั้งที่เปลี่ยน VERSION
 const SHELL = ['./', './index.html', './config.js', './manifest.json', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
   './sounds/ok.mp3', './sounds/dup.mp3', './sounds/no-trip.mp3', './sounds/queued.mp3', './sounds/fail.mp3', './sounds/blink.mp3', './sounds/no-blink.mp3'];

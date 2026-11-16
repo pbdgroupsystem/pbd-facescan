@@ -255,9 +255,10 @@ async function loadTeam() {
 }
 function renderList() {
   const q = LS.get('fsQueue', []);
-  $('listTitle').textContent = 'รายชื่อสาขา ' + team.branch;
+  $('listTitle').textContent = team.self ? 'สแกนหน้าตัวเอง · ' + team.branch : 'รายชื่อสาขา ' + team.branch;
   const trip = team.members.filter(m => m.trip).length;
   $('listSub').textContent = (trip ? 'มีใบออกแวนวันนี้ ' + trip + ' คน (สแกนได้เฉพาะคนที่มีใบออกแวน) · ' : 'วันนี้ยังไม่มีใบออกแวนในระบบ — สแกนไม่ได้ · ') + 'สแกนแล้ว ' + team.members.filter(m => m.scanned).length + ' คน';
+  if (team.self) $('listSub').textContent = 'ช่างสแกนหน้าตัวเองได้ ไม่ต้องมีใบออกแวน · สแกนเข้างานและเลิกงาน · แอดมินช่างเป็นผู้ตรวจ';
   const noRef = m => !(LS.get('fsRef', {})[m.no] || { ds: [] }).ds.length;
   $('list').innerHTML = team.members.map(m => '<div class="row"><span>' + esc(m.nick ? m.nick + ' · ' + m.name.split(/\s/)[0] : m.name) + (m.trip ? '<span class="tag">ออกแวน</span>' : '') + (noRef(m) ? '<span class="tag">ไม่มีรูปต้นแบบ</span>' : '') + '</span>' +
     (m.scanned ? '<span class="st ok">✓ ' + m.scanned.slice(0, 5) + '</span>' : q.some(x => x.no === m.no) ? '<span class="st" style="color:var(--warn)">รอส่ง</span>' : '<span class="st no">ยังไม่สแกน</span>') + '</div>').join('');
