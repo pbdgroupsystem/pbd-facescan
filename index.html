@@ -10,8 +10,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="PBD สแกนหน้า">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
 <style>
 :root{--brand:#8B1A1A;--ok:#1E8E3E;--warn:#D99800;--bad:#D1342B;--muted:#6B7078;--bg:#F6F6F7;--card:#fff;--line:#E3E4E6}
 *{box-sizing:border-box}body{margin:0;font-family:-apple-system,"Sarabun","Noto Sans Thai",sans-serif;background:var(--bg);color:#1F2328}
@@ -157,7 +157,7 @@ let pairTimer = null;
 async function showPair(note) {
   const el = $('pair'); el.style.display = 'block';
   if (pairTimer) { clearInterval(pairTimer); pairTimer = null; }
-  el.innerHTML = '<img src="icons/icon-192.png" alt="" style="width:76px;height:76px;border-radius:18px;box-shadow:0 6px 20px rgba(0,0,0,.3)"><h2 style="margin:12px 0 4px">PBD สแกนหน้านอกพื้นที่</h2>' +
+  el.innerHTML = '<img src="icon-192.png" alt="" style="width:76px;height:76px;border-radius:18px;box-shadow:0 6px 20px rgba(0,0,0,.3)"><h2 style="margin:12px 0 4px">PBD สแกนหน้านอกพื้นที่</h2>' +
     '<div style="font-size:14px;opacity:.85">เชื่อมแอปบนเครื่องนี้กับ LINE ของคุณ (ทำครั้งเดียว)</div>' + (note ? '<div style="margin-top:12px;font-size:13px;background:rgba(255,255,255,.15);border-radius:10px;padding:8px">' + esc(note) + '</div>' : '') +
     '<div class="box" id="pairBox">กำลังขอรหัส…</div><button class="lnk" id="webLogin">ล็อกอิน LINE ผ่านเว็บแทน</button>';
   $('webLogin').onclick = () => { try { sessionStorage.setItem('fsWeb', '1'); } catch (e) {} location.reload(); };
